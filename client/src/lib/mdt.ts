@@ -27,36 +27,69 @@ export interface PullWithCoords {
   totalCount: number;
 }
 
+export interface Vec3 {
+  x: number;
+  y: number;
+  z: number;
+}
+
+export interface EnemyWithWorldCoords extends EnemyClone {
+  worldPos?: Vec3;
+  normalizedX?: number;
+  normalizedY?: number;
+}
+
+export interface PullWithWorldCoords {
+  pullIndex: number;
+  enemies: EnemyWithWorldCoords[];
+  totalCount: number;
+}
+
 export interface ResolvedRoute {
   dungeonName: string;
   dungeonIdx: number;
   mapID: number;
-  pulls: PullWithCoords[];
+  scaleMultiplier: number;
+  pulls: PullWithWorldCoords[];
   totalCount: number;
 }
 
-export const DUNGEON_MAP_IDS: Record<number, number> = {
-  19: 353,   // Siege of Boralus
-  102: 503,  // Ara-Kara
-  103: 506,  // Cinderbrew Meadery
-  104: 502,  // City of Threads
-  105: 504,  // Darkflame Cleft
-  108: 507,  // Grim Batol
-  115: 378,  // Halls of Atonement
-  116: 370,  // Mechagon Workshop
-  117: 375,  // Mists of Tirna Scithe
-  119: 525,  // Operation Floodgate
-  121: 499,  // Priory of the Sacred Flame
-  123: 391,  // Tazavesh: Streets
-  124: 392,  // Tazavesh: Gambit
-  125: 382,  // Theater of Pain
-  126: 505,  // The Dawnbreaker
-  127: 247,  // The Motherlode
-  128: 376,  // The Necrotic Wake
-  129: 500,  // The Rookery
-  130: 501,  // The Stonevault
-  131: 542,  // Eco-Dome Aldani
+export const MDT_CANVAS_WIDTH = 840;
+export const MDT_CANVAS_HEIGHT = 555;
+
+export interface DungeonMetadata {
+  mapID: number;
+  englishName: string;
+  scaleMultiplier?: number;
+  viewportOverrides?: Record<number, { zoomScale: number; horizontalPan: number; verticalPan: number }>;
+}
+
+export const DUNGEON_METADATA: Record<number, DungeonMetadata> = {
+  19: { mapID: 353, englishName: "Siege of Boralus", viewportOverrides: { 2: { zoomScale: 4.3, horizontalPan: 499.1, verticalPan: 38.7 } } },
+  30: { mapID: 378, englishName: "Halls of Atonement" },
+  31: { mapID: 375, englishName: "Mists of Tirna Scithe" },
+  35: { mapID: 376, englishName: "The Necrotic Wake", scaleMultiplier: 1.3 },
+  37: { mapID: 391, englishName: "Tazavesh: Streets of Wonder" },
+  38: { mapID: 392, englishName: "Tazavesh: So'leah's Gambit" },
+  110: { mapID: 501, englishName: "The Stonevault" },
+  111: { mapID: 505, englishName: "The Dawnbreaker" },
+  112: { mapID: 507, englishName: "Grim Batol" },
+  113: { mapID: 503, englishName: "Ara-Kara" },
+  114: { mapID: 502, englishName: "City of Threads" },
+  115: { mapID: 499, englishName: "Priory of the Sacred Flame" },
+  116: { mapID: 506, englishName: "Cinderbrew Meadery" },
+  117: { mapID: 504, englishName: "Darkflame Cleft" },
+  118: { mapID: 500, englishName: "The Rookery" },
+  119: { mapID: 525, englishName: "Operation: Floodgate" },
+  120: { mapID: 247, englishName: "The MOTHERLODE!!" },
+  121: { mapID: 382, englishName: "Theater of Pain" },
+  122: { mapID: 370, englishName: "Mechagon - Workshop" },
+  123: { mapID: 542, englishName: "Eco-Dome Al'dani", viewportOverrides: { 1: { zoomScale: 1.3, horizontalPan: 93.9, verticalPan: 48.8 } } },
 };
+
+export const DUNGEON_MAP_IDS: Record<number, number> = Object.fromEntries(
+  Object.entries(DUNGEON_METADATA).map(([idx, meta]) => [parseInt(idx), meta.mapID])
+);
 
 // --- LibDeflate: DecodeForPrint Implementation ---
 
@@ -350,6 +383,134 @@ function toArray<T>(obj: any): T[] {
   return result;
 }
 
+export interface ViewportOverride {
+  zoomScale: number;
+  horizontalPan: number;
+  verticalPan: number;
+}
+
+export function mdtToNormalizedCoords(
+  mdtX: number, 
+  mdtY: number, 
+  scaleMultiplier: number = 1.0,
+  sublevel: number = 1,
+  viewportOverrides?: Record<number, ViewportOverride>
+): { normalizedX: number; normalizedY: number } {
+  const scaledWidth = MDT_CANVAS_WIDTH * scaleMultiplier;
+  const scaledHeight = MDT_CANVAS_HEIGHT * scaleMultiplier;
+  
+  let adjustedX = mdtX;
+  let adjustedY = Math.abs(mdtY);
+  
+  if (viewportOverrides && viewportOverrides[sublevel]) {
+    const override = viewportOverrides[sublevel];
+    adjustedX = (mdtX - override.horizontalPan) / override.zoomScale;
+    adjustedY = (Math.abs(mdtY) - override.verticalPan) / override.zoomScale;
+  }
+  
+  let normalizedX = adjustedX / scaledWidth;
+  let normalizedY = adjustedY / scaledHeight;
+  
+  normalizedX = Math.max(0, Math.min(1, normalizedX));
+  normalizedY = Math.max(0, Math.min(1, normalizedY));
+  
+  return { normalizedX, normalizedY };
+}
+
+export function generateSylvanasLuaCode(route: ResolvedRoute): string {
+  const metadata = DUNGEON_METADATA[route.dungeonIdx];
+  const mapID = metadata?.mapID || route.mapID;
+  const scaleMult = metadata?.scaleMultiplier || 1.0;
+  const hasViewportOverrides = metadata?.viewportOverrides && Object.keys(metadata.viewportOverrides).length > 0;
+  
+  const lines: string[] = [
+    `-- MDT Route: ${route.dungeonName}`,
+    `-- Map ID: ${mapID}`,
+    `-- Scale Multiplier: ${scaleMult}`,
+    `-- Total Count: ${route.totalCount}`,
+    `-- Viewport Overrides: ${hasViewportOverrides ? 'Yes (per-sublevel calibration applied)' : 'None'}`,
+    ``,
+    `local coords_helper = require("common.utility.coords_helper")`,
+    `local vec3 = require("common.geometry.vec3")`,
+    `local graphics_helper = require("common.utility.graphics_helper")`,
+    ``,
+    `-- MDT Canvas dimensions: 840x555 pixels`,
+    `-- Normalized coordinates are clamped to [0,1] range`,
+    `-- Per-sublevel viewport overrides have been applied during normalization`,
+    ``,
+    `local MDT_ROUTE = {`,
+    `  dungeonName = "${route.dungeonName}",`,
+    `  dungeonIdx = ${route.dungeonIdx},`,
+    `  mapID = ${mapID},`,
+    `  scaleMultiplier = ${scaleMult},`,
+    `  totalCount = ${route.totalCount},`,
+  ];
+  
+  if (hasViewportOverrides && metadata.viewportOverrides) {
+    lines.push(`  viewportOverrides = {`);
+    for (const [sublevel, override] of Object.entries(metadata.viewportOverrides)) {
+      lines.push(`    [${sublevel}] = { zoomScale = ${override.zoomScale}, horizontalPan = ${override.horizontalPan}, verticalPan = ${override.verticalPan} },`);
+    }
+    lines.push(`  },`);
+  }
+  
+  lines.push(`  pulls = {`);
+  
+  for (const pull of route.pulls) {
+    lines.push(`    [${pull.pullIndex}] = {`);
+    lines.push(`      enemies = {`);
+    
+    for (let i = 0; i < pull.enemies.length; i++) {
+      const enemy = pull.enemies[i];
+      const comma = i < pull.enemies.length - 1 ? ',' : '';
+      lines.push(`        { npcId = ${enemy.id}, name = "${enemy.name}", mdtX = ${enemy.x.toFixed(2)}, mdtY = ${enemy.y.toFixed(2)}, normalizedX = ${enemy.normalizedX?.toFixed(6) || 0}, normalizedY = ${enemy.normalizedY?.toFixed(6) || 0}, sublevel = ${enemy.sublevel}, count = ${enemy.count} }${comma}`);
+    }
+    
+    lines.push(`      },`);
+    lines.push(`      totalCount = ${pull.totalCount}`);
+    lines.push(`    },`);
+  }
+  
+  lines.push(`  }`);
+  lines.push(`}`);
+  lines.push(``);
+  lines.push(`-- Convert normalized coordinates to world vec3 using Sylvanas API`);
+  lines.push(`-- Usage: local worldPos = coords_helper:to_3d(normalizedX, normalizedY, mapID)`);
+  lines.push(`function MDT_ROUTE:get_world_positions()`);
+  lines.push(`  local positions = {}`);
+  lines.push(`  for pullIdx, pull in pairs(self.pulls) do`);
+  lines.push(`    positions[pullIdx] = {}`);
+  lines.push(`    for i, enemy in ipairs(pull.enemies) do`);
+  lines.push(`      local worldPos = coords_helper:to_3d(enemy.normalizedX, enemy.normalizedY, self.mapID)`);
+  lines.push(`      positions[pullIdx][i] = {`);
+  lines.push(`        npcId = enemy.npcId,`);
+  lines.push(`        name = enemy.name,`);
+  lines.push(`        worldPos = worldPos`);
+  lines.push(`      }`);
+  lines.push(`    end`);
+  lines.push(`  end`);
+  lines.push(`  return positions`);
+  lines.push(`end`);
+  lines.push(``);
+  lines.push(`-- Render ESP overlay for all enemies in route`);
+  lines.push(`function MDT_ROUTE:draw_esp()`);
+  lines.push(`  local positions = self:get_world_positions()`);
+  lines.push(`  for pullIdx, pullPositions in pairs(positions) do`);
+  lines.push(`    for _, enemy in ipairs(pullPositions) do`);
+  lines.push(`      if enemy.worldPos then`);
+  lines.push(`        graphics_helper:world_to_screen(enemy.worldPos, function(screenPos)`);
+  lines.push(`          -- Draw enemy marker at screenPos.x, screenPos.y`);
+  lines.push(`        end)`);
+  lines.push(`      end`);
+  lines.push(`    end`);
+  lines.push(`  end`);
+  lines.push(`end`);
+  lines.push(``);
+  lines.push(`return MDT_ROUTE`);
+  
+  return lines.join('\n');
+}
+
 export function resolveCoordinates(data: MDTData): ResolvedRoute | null {
   const dungeonIdx = data.value?.currentDungeonIdx 
     || data.currentDungeonIdx 
@@ -367,6 +528,9 @@ export function resolveCoordinates(data: MDTData): ResolvedRoute | null {
     return null;
   }
   
+  const metadata = DUNGEON_METADATA[dungeonIdx];
+  const scaleMultiplier = metadata?.scaleMultiplier || 1.0;
+  
   const pullsData = data.value?.pulls || data.pulls;
   if (!pullsData) {
     console.warn("No pulls data found in decoded route");
@@ -374,19 +538,18 @@ export function resolveCoordinates(data: MDTData): ResolvedRoute | null {
   }
   
   const pullsArray = toArray<any>(pullsData);
-  const resolvedPulls: PullWithCoords[] = [];
+  const resolvedPulls: PullWithWorldCoords[] = [];
   let routeTotalCount = 0;
   
   for (let pullIdx = 1; pullIdx < pullsArray.length; pullIdx++) {
     const pull = pullsArray[pullIdx];
     if (!pull) continue;
     
-    const enemies: EnemyClone[] = [];
+    const enemies: EnemyWithWorldCoords[] = [];
     let pullTotalCount = 0;
     
-    // Iterate through each enemy type in the pull
     for (const [enemyIdxStr, cloneData] of Object.entries(pull)) {
-      if (enemyIdxStr === 'color') continue; // Skip color property
+      if (enemyIdxStr === 'color') continue;
       
       const enemyIdx = parseInt(enemyIdxStr);
       if (isNaN(enemyIdx)) continue;
@@ -394,7 +557,6 @@ export function resolveCoordinates(data: MDTData): ResolvedRoute | null {
       const enemyInfo = dungeon.enemies[enemyIdx.toString()];
       if (!enemyInfo) continue;
       
-      // cloneData is either an array of clone indices or an object with clone indices
       const cloneIndices = toArray<number>(cloneData);
       
       for (let i = 1; i < cloneIndices.length; i++) {
@@ -403,6 +565,14 @@ export function resolveCoordinates(data: MDTData): ResolvedRoute | null {
         
         const clone = enemyInfo.clones[cloneIdx.toString()];
         if (!clone) continue;
+        
+        const { normalizedX, normalizedY } = mdtToNormalizedCoords(
+          clone.x, 
+          clone.y, 
+          scaleMultiplier,
+          clone.sublevel || 1,
+          metadata?.viewportOverrides
+        );
         
         enemies.push({
           enemyIdx,
@@ -413,7 +583,9 @@ export function resolveCoordinates(data: MDTData): ResolvedRoute | null {
           y: clone.y,
           sublevel: clone.sublevel || 1,
           count: enemyInfo.count || 0,
-          group: clone.g
+          group: clone.g,
+          normalizedX,
+          normalizedY
         });
         
         pullTotalCount += enemyInfo.count || 0;
@@ -433,7 +605,8 @@ export function resolveCoordinates(data: MDTData): ResolvedRoute | null {
   return {
     dungeonName: dungeon.name,
     dungeonIdx,
-    mapID: DUNGEON_MAP_IDS[dungeonIdx] || 0,
+    mapID: metadata?.mapID || DUNGEON_MAP_IDS[dungeonIdx] || 0,
+    scaleMultiplier,
     pulls: resolvedPulls,
     totalCount: routeTotalCount
   };

@@ -1,5 +1,5 @@
 import { useState } from "react";
-import { decodeMDT, resolveCoordinates, type ResolvedRoute } from "@/lib/mdt";
+import { decodeMDT, resolveCoordinates, generateSylvanasLuaCode, DUNGEON_METADATA, type ResolvedRoute } from "@/lib/mdt";
 import { Button } from "@/components/ui/button";
 import { Textarea } from "@/components/ui/textarea";
 import { Card, CardContent, CardHeader, CardTitle, CardDescription } from "@/components/ui/card";
@@ -23,70 +23,25 @@ function countPulls(pulls: any): number {
   return Object.keys(pulls).filter(k => !isNaN(Number(k))).length;
 }
 
-const MDT_CANVAS_WIDTH = 840;
-const MDT_CANVAS_HEIGHT = 555;
-
-function mdtToNormalized(x: number, y: number): { nx: number, ny: number } {
-  return {
-    nx: x / MDT_CANVAS_WIDTH,
-    ny: Math.abs(y) / MDT_CANVAS_HEIGHT
-  };
-}
-
 function generateLuaExport(route: ResolvedRoute, useSylvanasVec3: boolean = false): string {
+  if (useSylvanasVec3) {
+    return generateSylvanasLuaCode(route);
+  }
+  
   const dungeonVar = route.dungeonName.toUpperCase().replace(/[^A-Z0-9]/g, '_');
-  const hasValidMapId = route.mapID > 0;
-  const canUseSylvanasVec3 = useSylvanasVec3 && hasValidMapId;
   
   let lua = `-- Route for ${route.dungeonName}\n`;
   lua += `-- Generated from MDT Decoder\n`;
   lua += `-- Total Forces: ${route.totalCount}\n`;
-  lua += `-- Map ID: ${route.mapID}${!hasValidMapId ? ' (UNKNOWN - vec3 conversion unavailable)' : ''}\n`;
-  if (canUseSylvanasVec3) {
-    lua += `-- Coordinates: Sylvanas vec3 world coordinates (EXPERIMENTAL)\n`;
-    lua += `-- WARNING: MDT uses a custom canvas coordinate system that may not map\n`;
-    lua += `-- directly to WoW world coordinates. Multi-sublevel dungeons may require\n`;
-    lua += `-- additional calibration. Verify positions in-game before relying on them.\n`;
-  } else {
-    lua += `-- Coordinates: MDT canvas pixels (840x555)\n`;
-  }
+  lua += `-- Map ID: ${route.mapID}\n`;
+  lua += `-- Scale Multiplier: ${route.scaleMultiplier}\n`;
+  lua += `-- Coordinates: MDT canvas pixels (840x555)\n`;
   lua += `\n`;
-  
-  if (canUseSylvanasVec3) {
-    lua += `-- Sylvanas API imports for coordinate conversion\n`;
-    lua += `---@type core\n`;
-    lua += `local core = require("common/core")\n`;
-    lua += `---@type vec2\n`;
-    lua += `local vec2 = require("common/geometry/vec2")\n`;
-    lua += `---@type vec3\n`;
-    lua += `local vec3 = require("common/geometry/vec3")\n\n`;
-    lua += `local MAP_ID = ${route.mapID}\n\n`;
-    lua += `-- NOTE: This is a basic coordinate conversion for single-sublevel dungeons.\n`;
-    lua += `-- Multi-level dungeons may require per-sublevel offset/scale transformations.\n`;
-    lua += `-- MDT canvas origin is top-left, Y increases downward (negative values in database)\n`;
-    lua += `-- Convert MDT canvas coords (840x555) to normalized map coords (0-1 range, clamped)\n`;
-    lua += `local function mdt_to_map_pos(mdt_x, mdt_y)\n`;
-    lua += `    -- Normalize X: 0-840 -> 0-1\n`;
-    lua += `    -- Normalize Y: MDT uses negative Y values, so negate and normalize\n`;
-    lua += `    local norm_x = math.max(0, math.min(1, mdt_x / 840))\n`;
-    lua += `    local norm_y = math.max(0, math.min(1, -mdt_y / 555))\n`;
-    lua += `    return vec2.new(norm_x, norm_y)\n`;
-    lua += `end\n\n`;
-    lua += `-- Convert MDT coords to Sylvanas vec3 world position\n`;
-    lua += `local function mdt_to_vec3(mdt_x, mdt_y)\n`;
-    lua += `    local map_pos = mdt_to_map_pos(mdt_x, mdt_y)\n`;
-    lua += `    local world_xy = core.game_ui.get_world_pos_from_map_pos(MAP_ID, map_pos)\n`;
-    lua += `    if world_xy then\n`;
-    lua += `        local height = core.get_height_for_position(vec3.new(world_xy.x, world_xy.y, 0))\n`;
-    lua += `        return vec3.new(world_xy.x, world_xy.y, height or 0)\n`;
-    lua += `    end\n`;
-    lua += `    return nil\n`;
-    lua += `end\n\n`;
-  }
   
   lua += `local ${dungeonVar}_ROUTE = {\n`;
   lua += `    dungeon = "${route.dungeonName}",\n`;
   lua += `    map_id = ${route.mapID},\n`;
+  lua += `    scale_multiplier = ${route.scaleMultiplier},\n`;
   lua += `    pulls = {\n`;
   
   for (const pull of route.pulls) {
@@ -94,13 +49,7 @@ function generateLuaExport(route: ResolvedRoute, useSylvanasVec3: boolean = fals
     lua += `            note = "Pull ${pull.pullIndex}",\n`;
     lua += `            enemies = {\n`;
     for (const enemy of pull.enemies) {
-      if (canUseSylvanasVec3) {
-        const normX = enemy.x / MDT_CANVAS_WIDTH;
-        const normY = -enemy.y / MDT_CANVAS_HEIGHT;
-        lua += `                { name = "${enemy.name}", id = ${enemy.id}, mdt_x = ${enemy.x.toFixed(2)}, mdt_y = ${enemy.y.toFixed(2)}, map_x = ${normX.toFixed(4)}, map_y = ${normY.toFixed(4)}, count = ${enemy.count} },\n`;
-      } else {
-        lua += `                { name = "${enemy.name}", id = ${enemy.id}, x = ${enemy.x.toFixed(2)}, y = ${enemy.y.toFixed(2)}, count = ${enemy.count} },\n`;
-      }
+      lua += `                { name = "${enemy.name}", id = ${enemy.id}, x = ${enemy.x.toFixed(2)}, y = ${enemy.y.toFixed(2)}, normalizedX = ${(enemy.normalizedX || 0).toFixed(6)}, normalizedY = ${(enemy.normalizedY || 0).toFixed(6)}, sublevel = ${enemy.sublevel}, count = ${enemy.count} },\n`;
     }
     lua += `            },\n`;
     lua += `            total_count = ${pull.totalCount}\n`;
@@ -109,22 +58,6 @@ function generateLuaExport(route: ResolvedRoute, useSylvanasVec3: boolean = fals
   
   lua += `    }\n`;
   lua += `}\n\n`;
-  
-  if (canUseSylvanasVec3) {
-    lua += `-- Convert all enemies to vec3 world positions and attach to route\n`;
-    lua += `local function convert_route_to_vec3()\n`;
-    lua += `    for _, pull in ipairs(${dungeonVar}_ROUTE.pulls) do\n`;
-    lua += `        for _, enemy in ipairs(pull.enemies) do\n`;
-    lua += `            local world_pos = mdt_to_vec3(enemy.mdt_x, enemy.mdt_y)\n`;
-    lua += `            if world_pos then\n`;
-    lua += `                enemy.pos = world_pos  -- vec3 world position for ESP/rendering\n`;
-    lua += `            end\n`;
-    lua += `        end\n`;
-    lua += `    end\n`;
-    lua += `end\n\n`;
-    lua += `-- Perform conversion on load\n`;
-    lua += `convert_route_to_vec3()\n\n`;
-  }
   
   lua += `-- Load route into ESP\n`;
   lua += `if _G.RouteESP then\n`;
@@ -266,11 +199,14 @@ export default function Home() {
                 className="space-y-6"
               >
                 {/* Metadata Cards */}
-                <div className="grid grid-cols-2 md:grid-cols-4 gap-4">
-                  <div className="p-4 rounded-lg bg-primary/10 border border-primary/20 space-y-1">
+                <div className="grid grid-cols-2 md:grid-cols-5 gap-4">
+                  <div className="p-4 rounded-lg bg-primary/10 border border-primary/20 space-y-1 md:col-span-2">
                     <div className="text-xs text-primary uppercase tracking-wider">Dungeon</div>
                     <div className="text-lg font-mono font-bold truncate" title={resolvedRoute?.dungeonName || "Unknown"}>
                       {resolvedRoute?.dungeonName || `ID: ${data.dungeonIdx || data.value?.currentDungeonIdx || "?"}`}
+                    </div>
+                    <div className="text-xs text-muted-foreground font-mono">
+                      Map ID: {resolvedRoute?.mapID || "?"} | Scale: {resolvedRoute?.scaleMultiplier?.toFixed(2) || "1.00"}
                     </div>
                   </div>
                   <div className="p-4 rounded-lg bg-secondary/10 border border-secondary/20 space-y-1">
@@ -337,19 +273,23 @@ export default function Home() {
                                           </div>
                                         </div>
                                       </div>
-                                      <div className="flex items-center gap-4 text-xs font-mono shrink-0">
+                                      <div className="flex flex-col gap-1 text-xs font-mono shrink-0 text-right">
                                         <div className="flex items-center gap-1.5 text-secondary">
                                           <MapPin className="w-3 h-3" />
                                           <span className="text-white">{enemy.x.toFixed(1)}, {enemy.y.toFixed(1)}</span>
+                                          {enemy.sublevel > 1 && (
+                                            <Badge variant="secondary" className="text-xs">
+                                              L{enemy.sublevel}
+                                            </Badge>
+                                          )}
                                         </div>
-                                        {enemy.sublevel > 1 && (
-                                          <Badge variant="secondary" className="text-xs">
-                                            Floor {enemy.sublevel}
-                                          </Badge>
-                                        )}
-                                        {enemy.count > 0 && (
-                                          <span className="text-primary">+{enemy.count}</span>
-                                        )}
+                                        <div className="flex items-center gap-1.5 text-muted-foreground">
+                                          <span className="text-xs">norm:</span>
+                                          <span className="text-green-400/80">{(enemy.normalizedX || 0).toFixed(4)}, {(enemy.normalizedY || 0).toFixed(4)}</span>
+                                          {enemy.count > 0 && (
+                                            <span className="text-primary">+{enemy.count}</span>
+                                          )}
+                                        </div>
                                       </div>
                                     </div>
                                   ))}
