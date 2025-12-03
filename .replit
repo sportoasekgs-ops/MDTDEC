@@ -45,4 +45,4 @@ args = "npm run dev"
 waitForPort = 5000
 
 [agent]
-mockupState = "MOCKUP"
+mockupState = "FULLSTACK"
