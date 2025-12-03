@@ -1,5 +1,5 @@
 import { useState } from "react";
-import { decodeMDT } from "@/lib/mdt";
+import { decodeMDT, resolveCoordinates, type ResolvedRoute } from "@/lib/mdt";
 import { Button } from "@/components/ui/button";
 import { Textarea } from "@/components/ui/textarea";
 import { Card, CardContent, CardHeader, CardTitle, CardDescription } from "@/components/ui/card";
@@ -7,7 +7,7 @@ import { ScrollArea } from "@/components/ui/scroll-area";
 import { Badge } from "@/components/ui/badge";
 import { Tabs, TabsContent, TabsList, TabsTrigger } from "@/components/ui/tabs";
 import { Alert, AlertDescription, AlertTitle } from "@/components/ui/alert";
-import { Terminal, Shield, Skull, Map as MapIcon, Code, Info } from "lucide-react";
+import { Terminal, Shield, Skull, Map as MapIcon, Code, Info, MapPin, Target } from "lucide-react";
 import { motion, AnimatePresence } from "framer-motion";
 
 function luaTableToArray(obj: any): any[] {
@@ -26,6 +26,7 @@ function countPulls(pulls: any): number {
 export default function Home() {
   const [input, setInput] = useState("");
   const [data, setData] = useState<any>(null);
+  const [resolvedRoute, setResolvedRoute] = useState<ResolvedRoute | null>(null);
   const [error, setError] = useState<string | null>(null);
   const [isDecoding, setIsDecoding] = useState(false);
 
@@ -35,13 +36,16 @@ export default function Home() {
     setIsDecoding(true);
     setError(null);
     setData(null);
+    setResolvedRoute(null);
 
-    // Simulate processing time for effect
     await new Promise(resolve => setTimeout(resolve, 800));
 
     try {
       const result = decodeMDT(input);
       setData(result);
+      
+      const resolved = resolveCoordinates(result);
+      setResolvedRoute(resolved);
     } catch (err: any) {
       setError(err.message);
     } finally {
@@ -126,18 +130,20 @@ export default function Home() {
                 {/* Metadata Cards */}
                 <div className="grid grid-cols-2 md:grid-cols-4 gap-4">
                   <div className="p-4 rounded-lg bg-primary/10 border border-primary/20 space-y-1">
-                    <div className="text-xs text-primary uppercase tracking-wider">Dungeon ID</div>
-                    <div className="text-2xl font-mono font-bold">{data.dungeonIdx || data.value?.currentDungeonIdx || "Unknown"}</div>
+                    <div className="text-xs text-primary uppercase tracking-wider">Dungeon</div>
+                    <div className="text-lg font-mono font-bold truncate" title={resolvedRoute?.dungeonName || "Unknown"}>
+                      {resolvedRoute?.dungeonName || `ID: ${data.dungeonIdx || data.value?.currentDungeonIdx || "?"}`}
+                    </div>
                   </div>
                   <div className="p-4 rounded-lg bg-secondary/10 border border-secondary/20 space-y-1">
                     <div className="text-xs text-secondary uppercase tracking-wider">Pulls</div>
                     <div className="text-2xl font-mono font-bold text-secondary">
-                      {countPulls(data.pulls || data.value?.pulls)}
+                      {resolvedRoute?.pulls?.length || countPulls(data.pulls || data.value?.pulls)}
                     </div>
                   </div>
                   <div className="p-4 rounded-lg bg-accent/30 border border-accent space-y-1">
-                    <div className="text-xs text-muted-foreground uppercase tracking-wider">Week</div>
-                    <div className="text-2xl font-mono font-bold">{data.week || data.value?.week || "—"}</div>
+                    <div className="text-xs text-muted-foreground uppercase tracking-wider">Total Forces</div>
+                    <div className="text-2xl font-mono font-bold">{resolvedRoute?.totalCount || "—"}</div>
                   </div>
                   <div className="p-4 rounded-lg bg-accent/30 border border-accent space-y-1">
                     <div className="text-xs text-muted-foreground uppercase tracking-wider">Author</div>
@@ -145,12 +151,87 @@ export default function Home() {
                   </div>
                 </div>
 
-                <Tabs defaultValue="pulls" className="w-full">
+                <Tabs defaultValue="coords" className="w-full">
                   <TabsList className="w-full grid grid-cols-3 bg-black/40 border border-border/50">
-                    <TabsTrigger value="pulls">Route Pulls</TabsTrigger>
-                    <TabsTrigger value="drawings">Drawings / Coords</TabsTrigger>
-                    <TabsTrigger value="raw">Raw Data</TabsTrigger>
+                    <TabsTrigger value="coords" data-testid="tab-coords">Coordinates</TabsTrigger>
+                    <TabsTrigger value="pulls" data-testid="tab-pulls">Route Pulls</TabsTrigger>
+                    <TabsTrigger value="raw" data-testid="tab-raw">Raw Data</TabsTrigger>
                   </TabsList>
+
+                  <TabsContent value="coords" className="mt-4">
+                    <Card className="bg-card/50 border-border/50 h-[500px]">
+                      <ScrollArea className="h-full p-6">
+                        {resolvedRoute && resolvedRoute.pulls.length > 0 ? (
+                          <div className="space-y-6">
+                            {resolvedRoute.pulls.map((pull) => (
+                              <div key={pull.pullIndex} className="group relative pl-6 border-l-2 border-secondary/30 hover:border-secondary transition-colors">
+                                <div className="absolute -left-[9px] top-0 w-4 h-4 rounded-full bg-background border-2 border-secondary/50 group-hover:border-secondary group-hover:scale-110 transition-all" />
+                                
+                                <div className="flex items-baseline justify-between gap-2 mb-3">
+                                  <h3 className="text-lg font-bold font-display text-white flex items-center gap-2">
+                                    <Target className="w-4 h-4 text-secondary" />
+                                    Pull {pull.pullIndex}
+                                  </h3>
+                                  <div className="flex items-center gap-2">
+                                    <Badge variant="outline" className="bg-secondary/5 border-secondary/20 text-secondary">
+                                      {pull.enemies.length} mobs
+                                    </Badge>
+                                    <Badge variant="outline" className="bg-primary/5 border-primary/20 text-primary">
+                                      +{pull.totalCount} forces
+                                    </Badge>
+                                  </div>
+                                </div>
+
+                                <div className="space-y-2">
+                                  {pull.enemies.map((enemy, i) => (
+                                    <div 
+                                      key={`${enemy.enemyIdx}-${enemy.cloneIdx}-${i}`} 
+                                      className="flex items-center justify-between gap-4 bg-black/30 p-3 rounded-lg border border-border/30"
+                                      data-testid={`enemy-${pull.pullIndex}-${i}`}
+                                    >
+                                      <div className="flex items-center gap-3 flex-1 min-w-0">
+                                        <Skull className="w-4 h-4 text-destructive/70 shrink-0" />
+                                        <div className="min-w-0">
+                                          <div className="font-medium text-white truncate">{enemy.name}</div>
+                                          <div className="text-xs text-muted-foreground font-mono">
+                                            NPC #{enemy.id} | Clone {enemy.cloneIdx}
+                                          </div>
+                                        </div>
+                                      </div>
+                                      <div className="flex items-center gap-4 text-xs font-mono shrink-0">
+                                        <div className="flex items-center gap-1.5 text-secondary">
+                                          <MapPin className="w-3 h-3" />
+                                          <span className="text-white">{enemy.x.toFixed(1)}, {enemy.y.toFixed(1)}</span>
+                                        </div>
+                                        {enemy.sublevel > 1 && (
+                                          <Badge variant="secondary" className="text-xs">
+                                            Floor {enemy.sublevel}
+                                          </Badge>
+                                        )}
+                                        {enemy.count > 0 && (
+                                          <span className="text-primary">+{enemy.count}</span>
+                                        )}
+                                      </div>
+                                    </div>
+                                  ))}
+                                </div>
+                              </div>
+                            ))}
+                          </div>
+                        ) : (
+                          <div className="flex flex-col items-center justify-center h-[400px] text-muted-foreground space-y-4">
+                            <MapIcon className="w-12 h-12 opacity-20" />
+                            <div className="text-center">
+                              <p>Could not resolve coordinates for this route.</p>
+                              <p className="text-xs opacity-50 max-w-xs mx-auto mt-2">
+                                The dungeon may not be in our database, or the route format may not be recognized.
+                              </p>
+                            </div>
+                          </div>
+                        )}
+                      </ScrollArea>
+                    </Card>
+                  </TabsContent>
 
                   <TabsContent value="pulls" className="mt-4">
                     <Card className="bg-card/50 border-border/50 h-[500px]">
@@ -186,40 +267,6 @@ export default function Home() {
                               No pull data found in this route.
                             </div>
                           )}
-                        </div>
-                      </ScrollArea>
-                    </Card>
-                  </TabsContent>
-
-                  <TabsContent value="drawings" className="mt-4">
-                    <Card className="bg-card/50 border-border/50 h-[500px]">
-                      <ScrollArea className="h-full p-6">
-                        <div className="space-y-4">
-                           {luaTableToArray(data.objects || data.value?.objects).length > 0 ? (
-                             luaTableToArray(data.objects || data.value?.objects).map((obj: any, i: number) => (
-                               <div key={i} className="p-4 rounded border border-secondary/20 bg-secondary/5 space-y-2">
-                                 <div className="flex items-center gap-2 text-secondary font-bold">
-                                   <MapIcon className="w-4 h-4" />
-                                   <span>Map Object {i + 1}</span>
-                                 </div>
-                                 <div className="grid grid-cols-2 gap-4 font-mono text-xs">
-                                   <div>X: <span className="text-white">{obj?.x || "N/A"}</span></div>
-                                   <div>Y: <span className="text-white">{obj?.y || "N/A"}</span></div>
-                                   {obj?.d && <div className="col-span-2">Data: {String(obj.d).substring(0, 50)}...</div>}
-                                 </div>
-                               </div>
-                             ))
-                           ) : (
-                             <div className="flex flex-col items-center justify-center h-[400px] text-muted-foreground space-y-4">
-                               <MapIcon className="w-12 h-12 opacity-20" />
-                               <div className="text-center">
-                                 <p>No custom map drawings found.</p>
-                                 <p className="text-xs opacity-50 max-w-xs mx-auto mt-2">
-                                   Standard routes rely on static database coordinates which are not included in the string. Only custom drawings/notes contain explicit coordinates.
-                                 </p>
-                               </div>
-                             </div>
-                           )}
                         </div>
                       </ScrollArea>
                     </Card>

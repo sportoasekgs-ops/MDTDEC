@@ -1,4 +1,5 @@
 import { inflateRaw } from "pako";
+import dungeonData from "./mdt-dungeons.json";
 
 export interface MDTData {
   dungeonEnemies: any[];
@@ -6,6 +7,31 @@ export interface MDTData {
   dungeonIdx: number;
   week: number;
   [key: string]: any;
+}
+
+export interface EnemyClone {
+  enemyIdx: number;
+  cloneIdx: number;
+  name: string;
+  id: number;
+  x: number;
+  y: number;
+  sublevel: number;
+  count: number;
+  group?: number;
+}
+
+export interface PullWithCoords {
+  pullIndex: number;
+  enemies: EnemyClone[];
+  totalCount: number;
+}
+
+export interface ResolvedRoute {
+  dungeonName: string;
+  dungeonIdx: number;
+  pulls: PullWithCoords[];
+  totalCount: number;
 }
 
 // --- LibDeflate: DecodeForPrint Implementation ---
@@ -287,4 +313,103 @@ export function decodeMDT(encodedString: string): MDTData | null {
     console.error("MDT Decode Error:", error);
     throw new Error(error.message || "Failed to decode string");
   }
+}
+
+// Convert numeric-keyed objects to arrays (Lua tables with numeric keys)
+function toArray<T>(obj: any): T[] {
+  if (!obj || typeof obj !== 'object') return [];
+  const keys = Object.keys(obj).filter(k => !isNaN(Number(k)));
+  const result: T[] = [];
+  for (const key of keys) {
+    result[Number(key)] = obj[key];
+  }
+  return result;
+}
+
+export function resolveCoordinates(data: MDTData): ResolvedRoute | null {
+  const dungeonIdx = data.value?.currentDungeonIdx 
+    || data.currentDungeonIdx 
+    || data.dungeonIdx 
+    || data.value?.dungeonIdx;
+    
+  if (!dungeonIdx) {
+    console.warn("No dungeon index found in decoded data");
+    return null;
+  }
+  
+  const dungeon = (dungeonData as any)[dungeonIdx.toString()];
+  if (!dungeon) {
+    console.warn(`Dungeon ${dungeonIdx} not found in database. Available dungeons: ${Object.keys(dungeonData).join(', ')}`);
+    return null;
+  }
+  
+  const pullsData = data.value?.pulls || data.pulls;
+  if (!pullsData) {
+    console.warn("No pulls data found in decoded route");
+    return null;
+  }
+  
+  const pullsArray = toArray<any>(pullsData);
+  const resolvedPulls: PullWithCoords[] = [];
+  let routeTotalCount = 0;
+  
+  for (let pullIdx = 1; pullIdx < pullsArray.length; pullIdx++) {
+    const pull = pullsArray[pullIdx];
+    if (!pull) continue;
+    
+    const enemies: EnemyClone[] = [];
+    let pullTotalCount = 0;
+    
+    // Iterate through each enemy type in the pull
+    for (const [enemyIdxStr, cloneData] of Object.entries(pull)) {
+      if (enemyIdxStr === 'color') continue; // Skip color property
+      
+      const enemyIdx = parseInt(enemyIdxStr);
+      if (isNaN(enemyIdx)) continue;
+      
+      const enemyInfo = dungeon.enemies[enemyIdx.toString()];
+      if (!enemyInfo) continue;
+      
+      // cloneData is either an array of clone indices or an object with clone indices
+      const cloneIndices = toArray<number>(cloneData);
+      
+      for (let i = 1; i < cloneIndices.length; i++) {
+        const cloneIdx = cloneIndices[i];
+        if (cloneIdx === undefined || cloneIdx === null) continue;
+        
+        const clone = enemyInfo.clones[cloneIdx.toString()];
+        if (!clone) continue;
+        
+        enemies.push({
+          enemyIdx,
+          cloneIdx,
+          name: enemyInfo.name,
+          id: enemyInfo.id,
+          x: clone.x,
+          y: clone.y,
+          sublevel: clone.sublevel || 1,
+          count: enemyInfo.count || 0,
+          group: clone.g
+        });
+        
+        pullTotalCount += enemyInfo.count || 0;
+      }
+    }
+    
+    if (enemies.length > 0) {
+      resolvedPulls.push({
+        pullIndex: pullIdx,
+        enemies,
+        totalCount: pullTotalCount
+      });
+      routeTotalCount += pullTotalCount;
+    }
+  }
+  
+  return {
+    dungeonName: dungeon.name,
+    dungeonIdx,
+    pulls: resolvedPulls,
+    totalCount: routeTotalCount
+  };
 }
