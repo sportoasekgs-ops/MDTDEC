@@ -30,9 +30,33 @@ export interface PullWithCoords {
 export interface ResolvedRoute {
   dungeonName: string;
   dungeonIdx: number;
+  mapID: number;
   pulls: PullWithCoords[];
   totalCount: number;
 }
+
+export const DUNGEON_MAP_IDS: Record<number, number> = {
+  19: 353,   // Siege of Boralus
+  102: 503,  // Ara-Kara
+  103: 506,  // Cinderbrew Meadery
+  104: 502,  // City of Threads
+  105: 504,  // Darkflame Cleft
+  108: 507,  // Grim Batol
+  115: 378,  // Halls of Atonement
+  116: 370,  // Mechagon Workshop
+  117: 375,  // Mists of Tirna Scithe
+  119: 525,  // Operation Floodgate
+  121: 499,  // Priory of the Sacred Flame
+  123: 391,  // Tazavesh: Streets
+  124: 392,  // Tazavesh: Gambit
+  125: 382,  // Theater of Pain
+  126: 505,  // The Dawnbreaker
+  127: 247,  // The Motherlode
+  128: 376,  // The Necrotic Wake
+  129: 500,  // The Rookery
+  130: 501,  // The Stonevault
+  131: 542,  // Eco-Dome Aldani
+};
 
 // --- LibDeflate: DecodeForPrint Implementation ---
 
@@ -409,6 +433,7 @@ export function resolveCoordinates(data: MDTData): ResolvedRoute | null {
   return {
     dungeonName: dungeon.name,
     dungeonIdx,
+    mapID: DUNGEON_MAP_IDS[dungeonIdx] || 0,
     pulls: resolvedPulls,
     totalCount: routeTotalCount
   };

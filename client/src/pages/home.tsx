@@ -33,25 +33,60 @@ function mdtToNormalized(x: number, y: number): { nx: number, ny: number } {
   };
 }
 
-function generateLuaExport(route: ResolvedRoute, useNormalized: boolean = false): string {
+function generateLuaExport(route: ResolvedRoute, useSylvanasVec3: boolean = false): string {
   const dungeonVar = route.dungeonName.toUpperCase().replace(/[^A-Z0-9]/g, '_');
+  const hasValidMapId = route.mapID > 0;
+  const canUseSylvanasVec3 = useSylvanasVec3 && hasValidMapId;
+  
   let lua = `-- Route for ${route.dungeonName}\n`;
   lua += `-- Generated from MDT Decoder\n`;
   lua += `-- Total Forces: ${route.totalCount}\n`;
-  if (useNormalized) {
-    lua += `-- Coordinates: NORMALIZED (0-1 range for coords_helper:to_3d)\n`;
+  lua += `-- Map ID: ${route.mapID}${!hasValidMapId ? ' (UNKNOWN - vec3 conversion unavailable)' : ''}\n`;
+  if (canUseSylvanasVec3) {
+    lua += `-- Coordinates: Sylvanas vec3 world coordinates (EXPERIMENTAL)\n`;
+    lua += `-- WARNING: MDT uses a custom canvas coordinate system that may not map\n`;
+    lua += `-- directly to WoW world coordinates. Multi-sublevel dungeons may require\n`;
+    lua += `-- additional calibration. Verify positions in-game before relying on them.\n`;
   } else {
     lua += `-- Coordinates: MDT canvas pixels (840x555)\n`;
   }
   lua += `\n`;
   
-  if (useNormalized) {
-    lua += `---@type coords_helper\n`;
-    lua += `local coords = require("common/utility/coords_helper")\n\n`;
+  if (canUseSylvanasVec3) {
+    lua += `-- Sylvanas API imports for coordinate conversion\n`;
+    lua += `---@type core\n`;
+    lua += `local core = require("common/core")\n`;
+    lua += `---@type vec2\n`;
+    lua += `local vec2 = require("common/geometry/vec2")\n`;
+    lua += `---@type vec3\n`;
+    lua += `local vec3 = require("common/geometry/vec3")\n\n`;
+    lua += `local MAP_ID = ${route.mapID}\n\n`;
+    lua += `-- NOTE: This is a basic coordinate conversion for single-sublevel dungeons.\n`;
+    lua += `-- Multi-level dungeons may require per-sublevel offset/scale transformations.\n`;
+    lua += `-- MDT canvas origin is top-left, Y increases downward (negative values in database)\n`;
+    lua += `-- Convert MDT canvas coords (840x555) to normalized map coords (0-1 range, clamped)\n`;
+    lua += `local function mdt_to_map_pos(mdt_x, mdt_y)\n`;
+    lua += `    -- Normalize X: 0-840 -> 0-1\n`;
+    lua += `    -- Normalize Y: MDT uses negative Y values, so negate and normalize\n`;
+    lua += `    local norm_x = math.max(0, math.min(1, mdt_x / 840))\n`;
+    lua += `    local norm_y = math.max(0, math.min(1, -mdt_y / 555))\n`;
+    lua += `    return vec2.new(norm_x, norm_y)\n`;
+    lua += `end\n\n`;
+    lua += `-- Convert MDT coords to Sylvanas vec3 world position\n`;
+    lua += `local function mdt_to_vec3(mdt_x, mdt_y)\n`;
+    lua += `    local map_pos = mdt_to_map_pos(mdt_x, mdt_y)\n`;
+    lua += `    local world_xy = core.game_ui.get_world_pos_from_map_pos(MAP_ID, map_pos)\n`;
+    lua += `    if world_xy then\n`;
+    lua += `        local height = core.get_height_for_position(vec3.new(world_xy.x, world_xy.y, 0))\n`;
+    lua += `        return vec3.new(world_xy.x, world_xy.y, height or 0)\n`;
+    lua += `    end\n`;
+    lua += `    return nil\n`;
+    lua += `end\n\n`;
   }
   
   lua += `local ${dungeonVar}_ROUTE = {\n`;
   lua += `    dungeon = "${route.dungeonName}",\n`;
+  lua += `    map_id = ${route.mapID},\n`;
   lua += `    pulls = {\n`;
   
   for (const pull of route.pulls) {
@@ -59,9 +94,10 @@ function generateLuaExport(route: ResolvedRoute, useNormalized: boolean = false)
     lua += `            note = "Pull ${pull.pullIndex}",\n`;
     lua += `            enemies = {\n`;
     for (const enemy of pull.enemies) {
-      if (useNormalized) {
-        const { nx, ny } = mdtToNormalized(enemy.x, enemy.y);
-        lua += `                { name = "${enemy.name}", id = ${enemy.id}, nx = ${nx.toFixed(4)}, ny = ${ny.toFixed(4)}, count = ${enemy.count} },\n`;
+      if (canUseSylvanasVec3) {
+        const normX = enemy.x / MDT_CANVAS_WIDTH;
+        const normY = -enemy.y / MDT_CANVAS_HEIGHT;
+        lua += `                { name = "${enemy.name}", id = ${enemy.id}, mdt_x = ${enemy.x.toFixed(2)}, mdt_y = ${enemy.y.toFixed(2)}, map_x = ${normX.toFixed(4)}, map_y = ${normY.toFixed(4)}, count = ${enemy.count} },\n`;
       } else {
         lua += `                { name = "${enemy.name}", id = ${enemy.id}, x = ${enemy.x.toFixed(2)}, y = ${enemy.y.toFixed(2)}, count = ${enemy.count} },\n`;
       }
@@ -74,9 +110,20 @@ function generateLuaExport(route: ResolvedRoute, useNormalized: boolean = false)
   lua += `    }\n`;
   lua += `}\n\n`;
   
-  if (useNormalized) {
-    lua += `-- Convert normalized coords to 3D world positions\n`;
-    lua += `-- Usage: local world_pos = coords:to_3d({ x = enemy.nx, y = enemy.ny })\n`;
+  if (canUseSylvanasVec3) {
+    lua += `-- Convert all enemies to vec3 world positions and attach to route\n`;
+    lua += `local function convert_route_to_vec3()\n`;
+    lua += `    for _, pull in ipairs(${dungeonVar}_ROUTE.pulls) do\n`;
+    lua += `        for _, enemy in ipairs(pull.enemies) do\n`;
+    lua += `            local world_pos = mdt_to_vec3(enemy.mdt_x, enemy.mdt_y)\n`;
+    lua += `            if world_pos then\n`;
+    lua += `                enemy.pos = world_pos  -- vec3 world position for ESP/rendering\n`;
+    lua += `            end\n`;
+    lua += `        end\n`;
+    lua += `    end\n`;
+    lua += `end\n\n`;
+    lua += `-- Perform conversion on load\n`;
+    lua += `convert_route_to_vec3()\n\n`;
   }
   
   lua += `-- Load route into ESP\n`;
@@ -94,7 +141,8 @@ export default function Home() {
   const [error, setError] = useState<string | null>(null);
   const [isDecoding, setIsDecoding] = useState(false);
   const [copied, setCopied] = useState(false);
-  const [useNormalized, setUseNormalized] = useState(false);
+  const [useSylvanasVec3, setUseSylvanasVec3] = useState(false);
+  const [vec3Acknowledged, setVec3Acknowledged] = useState(false);
 
   const handleDecode = async () => {
     if (!input) return;
@@ -123,7 +171,7 @@ export default function Home() {
 
   const handleCopyLua = async () => {
     if (!resolvedRoute) return;
-    const lua = generateLuaExport(resolvedRoute, useNormalized);
+    const lua = generateLuaExport(resolvedRoute, useSylvanasVec3);
     await navigator.clipboard.writeText(lua);
     setCopied(true);
     setTimeout(() => setCopied(false), 2000);
@@ -131,7 +179,7 @@ export default function Home() {
 
   const handleDownloadLua = () => {
     if (!resolvedRoute) return;
-    const lua = generateLuaExport(resolvedRoute, useNormalized);
+    const lua = generateLuaExport(resolvedRoute, useSylvanasVec3);
     const blob = new Blob([lua], { type: 'text/plain' });
     const url = URL.createObjectURL(blob);
     const a = document.createElement('a');
@@ -368,7 +416,7 @@ export default function Home() {
                       <div className="p-4 border-b border-border/50 space-y-3">
                         <div className="flex items-center justify-between gap-4">
                           <div className="text-sm text-muted-foreground">
-                            Lua code for Project Sylvanas Route Assistant ESP
+                            Lua code for Project Sylvanas with vec3 world coordinate conversion
                           </div>
                           <div className="flex items-center gap-2">
                             <Button
@@ -397,26 +445,37 @@ export default function Home() {
                         </div>
                         <div className="flex items-center justify-between gap-4 p-3 rounded-md bg-black/20 border border-border/30">
                           <div className="flex-1">
-                            <div className="text-sm font-medium">Normalized Coordinates (0-1)</div>
-                            <div className="text-xs text-muted-foreground mt-1">
-                              Convert MDT canvas coords to normalized range for coords_helper:to_3d()
+                            <div className="text-sm font-medium flex items-center gap-2">
+                              Sylvanas Vec3 Coordinates
+                              <Badge variant="outline" className="text-xs bg-yellow-500/10 text-yellow-500 border-yellow-500/20">
+                                Experimental
+                              </Badge>
                             </div>
+                            <div className="text-xs text-muted-foreground mt-1">
+                              Generate Sylvanas API code for 3D world positions. Note: MDT uses a custom canvas coordinate system - accuracy may vary by dungeon.
+                            </div>
+                            {resolvedRoute && resolvedRoute.mapID === 0 && (
+                              <div className="text-xs text-destructive mt-1">
+                                Map ID unknown for this dungeon - vec3 conversion unavailable
+                              </div>
+                            )}
                           </div>
                           <Button
                             size="sm"
-                            variant={useNormalized ? "default" : "outline"}
-                            onClick={() => setUseNormalized(!useNormalized)}
+                            variant={useSylvanasVec3 ? "default" : "outline"}
+                            onClick={() => setUseSylvanasVec3(!useSylvanasVec3)}
                             className="gap-2"
-                            data-testid="button-toggle-normalized"
+                            disabled={resolvedRoute?.mapID === 0}
+                            data-testid="button-toggle-vec3"
                           >
-                            {useNormalized ? "Enabled" : "Disabled"}
+                            {useSylvanasVec3 ? "Enabled" : "Disabled"}
                           </Button>
                         </div>
                       </div>
                       <ScrollArea className="h-[calc(100%-130px)] p-4">
                         {resolvedRoute ? (
                           <pre className="text-xs font-mono text-yellow-400/80 leading-relaxed whitespace-pre-wrap">
-                            {generateLuaExport(resolvedRoute, useNormalized)}
+                            {generateLuaExport(resolvedRoute, useSylvanasVec3)}
                           </pre>
                         ) : (
                           <div className="flex flex-col items-center justify-center h-[280px] text-muted-foreground space-y-4">
