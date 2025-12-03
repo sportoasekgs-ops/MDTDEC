@@ -23,11 +23,33 @@ function countPulls(pulls: any): number {
   return Object.keys(pulls).filter(k => !isNaN(Number(k))).length;
 }
 
-function generateLuaExport(route: ResolvedRoute): string {
+const MDT_CANVAS_WIDTH = 840;
+const MDT_CANVAS_HEIGHT = 555;
+
+function mdtToNormalized(x: number, y: number): { nx: number, ny: number } {
+  return {
+    nx: x / MDT_CANVAS_WIDTH,
+    ny: Math.abs(y) / MDT_CANVAS_HEIGHT
+  };
+}
+
+function generateLuaExport(route: ResolvedRoute, useNormalized: boolean = false): string {
   const dungeonVar = route.dungeonName.toUpperCase().replace(/[^A-Z0-9]/g, '_');
   let lua = `-- Route for ${route.dungeonName}\n`;
   lua += `-- Generated from MDT Decoder\n`;
-  lua += `-- Total Forces: ${route.totalCount}\n\n`;
+  lua += `-- Total Forces: ${route.totalCount}\n`;
+  if (useNormalized) {
+    lua += `-- Coordinates: NORMALIZED (0-1 range for coords_helper:to_3d)\n`;
+  } else {
+    lua += `-- Coordinates: MDT canvas pixels (840x555)\n`;
+  }
+  lua += `\n`;
+  
+  if (useNormalized) {
+    lua += `---@type coords_helper\n`;
+    lua += `local coords = require("common/utility/coords_helper")\n\n`;
+  }
+  
   lua += `local ${dungeonVar}_ROUTE = {\n`;
   lua += `    dungeon = "${route.dungeonName}",\n`;
   lua += `    pulls = {\n`;
@@ -37,7 +59,12 @@ function generateLuaExport(route: ResolvedRoute): string {
     lua += `            note = "Pull ${pull.pullIndex}",\n`;
     lua += `            enemies = {\n`;
     for (const enemy of pull.enemies) {
-      lua += `                { name = "${enemy.name}", id = ${enemy.id}, x = ${enemy.x.toFixed(2)}, y = ${enemy.y.toFixed(2)}, count = ${enemy.count} },\n`;
+      if (useNormalized) {
+        const { nx, ny } = mdtToNormalized(enemy.x, enemy.y);
+        lua += `                { name = "${enemy.name}", id = ${enemy.id}, nx = ${nx.toFixed(4)}, ny = ${ny.toFixed(4)}, count = ${enemy.count} },\n`;
+      } else {
+        lua += `                { name = "${enemy.name}", id = ${enemy.id}, x = ${enemy.x.toFixed(2)}, y = ${enemy.y.toFixed(2)}, count = ${enemy.count} },\n`;
+      }
     }
     lua += `            },\n`;
     lua += `            total_count = ${pull.totalCount}\n`;
@@ -46,6 +73,12 @@ function generateLuaExport(route: ResolvedRoute): string {
   
   lua += `    }\n`;
   lua += `}\n\n`;
+  
+  if (useNormalized) {
+    lua += `-- Convert normalized coords to 3D world positions\n`;
+    lua += `-- Usage: local world_pos = coords:to_3d({ x = enemy.nx, y = enemy.ny })\n`;
+  }
+  
   lua += `-- Load route into ESP\n`;
   lua += `if _G.RouteESP then\n`;
   lua += `    _G.RouteESP.load_route(${dungeonVar}_ROUTE, "${route.dungeonName}")\n`;
@@ -61,6 +94,7 @@ export default function Home() {
   const [error, setError] = useState<string | null>(null);
   const [isDecoding, setIsDecoding] = useState(false);
   const [copied, setCopied] = useState(false);
+  const [useNormalized, setUseNormalized] = useState(false);
 
   const handleDecode = async () => {
     if (!input) return;
@@ -89,10 +123,24 @@ export default function Home() {
 
   const handleCopyLua = async () => {
     if (!resolvedRoute) return;
-    const lua = generateLuaExport(resolvedRoute);
+    const lua = generateLuaExport(resolvedRoute, useNormalized);
     await navigator.clipboard.writeText(lua);
     setCopied(true);
     setTimeout(() => setCopied(false), 2000);
+  };
+
+  const handleDownloadLua = () => {
+    if (!resolvedRoute) return;
+    const lua = generateLuaExport(resolvedRoute, useNormalized);
+    const blob = new Blob([lua], { type: 'text/plain' });
+    const url = URL.createObjectURL(blob);
+    const a = document.createElement('a');
+    a.href = url;
+    a.download = `${resolvedRoute.dungeonName.replace(/[^a-zA-Z0-9]/g, '_')}_route.lua`;
+    document.body.appendChild(a);
+    a.click();
+    document.body.removeChild(a);
+    URL.revokeObjectURL(url);
   };
 
   return (
@@ -317,28 +365,61 @@ export default function Home() {
 
                   <TabsContent value="lua" className="mt-4">
                     <Card className="bg-card/50 border-border/50 h-[500px]">
-                      <div className="p-4 border-b border-border/50 flex items-center justify-between">
-                        <div className="text-sm text-muted-foreground">
-                          Lua code for Project Sylvanas Route Assistant ESP
+                      <div className="p-4 border-b border-border/50 space-y-3">
+                        <div className="flex items-center justify-between gap-4">
+                          <div className="text-sm text-muted-foreground">
+                            Lua code for Project Sylvanas Route Assistant ESP
+                          </div>
+                          <div className="flex items-center gap-2">
+                            <Button
+                              size="sm"
+                              variant="outline"
+                              onClick={handleDownloadLua}
+                              disabled={!resolvedRoute}
+                              className="gap-2"
+                              data-testid="button-download-lua"
+                            >
+                              <Download className="w-4 h-4" />
+                              Download
+                            </Button>
+                            <Button
+                              size="sm"
+                              variant="outline"
+                              onClick={handleCopyLua}
+                              disabled={!resolvedRoute}
+                              className="gap-2"
+                              data-testid="button-copy-lua"
+                            >
+                              {copied ? <Check className="w-4 h-4" /> : <Copy className="w-4 h-4" />}
+                              {copied ? "Copied!" : "Copy"}
+                            </Button>
+                          </div>
                         </div>
-                        <Button
-                          size="sm"
-                          variant="outline"
-                          onClick={handleCopyLua}
-                          disabled={!resolvedRoute}
-                          className="gap-2"
-                        >
-                          {copied ? <Check className="w-4 h-4" /> : <Copy className="w-4 h-4" />}
-                          {copied ? "Copied!" : "Copy Lua"}
-                        </Button>
+                        <div className="flex items-center justify-between gap-4 p-3 rounded-md bg-black/20 border border-border/30">
+                          <div className="flex-1">
+                            <div className="text-sm font-medium">Normalized Coordinates (0-1)</div>
+                            <div className="text-xs text-muted-foreground mt-1">
+                              Convert MDT canvas coords to normalized range for coords_helper:to_3d()
+                            </div>
+                          </div>
+                          <Button
+                            size="sm"
+                            variant={useNormalized ? "default" : "outline"}
+                            onClick={() => setUseNormalized(!useNormalized)}
+                            className="gap-2"
+                            data-testid="button-toggle-normalized"
+                          >
+                            {useNormalized ? "Enabled" : "Disabled"}
+                          </Button>
+                        </div>
                       </div>
-                      <ScrollArea className="h-[calc(100%-60px)] p-4">
+                      <ScrollArea className="h-[calc(100%-130px)] p-4">
                         {resolvedRoute ? (
                           <pre className="text-xs font-mono text-yellow-400/80 leading-relaxed whitespace-pre-wrap">
-                            {generateLuaExport(resolvedRoute)}
+                            {generateLuaExport(resolvedRoute, useNormalized)}
                           </pre>
                         ) : (
-                          <div className="flex flex-col items-center justify-center h-[350px] text-muted-foreground space-y-4">
+                          <div className="flex flex-col items-center justify-center h-[280px] text-muted-foreground space-y-4">
                             <Download className="w-12 h-12 opacity-20" />
                             <div className="text-center">
                               <p>No route data to export.</p>
