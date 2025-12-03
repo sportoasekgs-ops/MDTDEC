@@ -1,4 +1,4 @@
-modules = ["nodejs-20", "web"]
+modules = ["lua-5.2", "nodejs-20", "web"]
 run = "npm run dev"
 hidden = [".config", ".git", "generated-icon.png", "node_modules", "dist"]
 
@@ -19,6 +19,10 @@ externalPort = 80
 [[ports]]
 localPort = 40929
 externalPort = 3000
+
+[[ports]]
+localPort = 44609
+externalPort = 3001
 
 [env]
 PORT = "5000"
