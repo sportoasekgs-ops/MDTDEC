@@ -7,8 +7,21 @@ import { ScrollArea } from "@/components/ui/scroll-area";
 import { Badge } from "@/components/ui/badge";
 import { Tabs, TabsContent, TabsList, TabsTrigger } from "@/components/ui/tabs";
 import { Alert, AlertDescription, AlertTitle } from "@/components/ui/alert";
-import { Terminal, Shield, Sword, Skull, Map as MapIcon, Code, Info } from "lucide-react";
+import { Terminal, Shield, Skull, Map as MapIcon, Code, Info } from "lucide-react";
 import { motion, AnimatePresence } from "framer-motion";
+
+function luaTableToArray(obj: any): any[] {
+  if (!obj || typeof obj !== 'object') return [];
+  if (Array.isArray(obj)) return obj;
+  const keys = Object.keys(obj).filter(k => !isNaN(Number(k))).sort((a, b) => Number(a) - Number(b));
+  return keys.map(k => obj[k]);
+}
+
+function countPulls(pulls: any): number {
+  if (!pulls) return 0;
+  if (Array.isArray(pulls)) return pulls.length;
+  return Object.keys(pulls).filter(k => !isNaN(Number(k))).length;
+}
 
 export default function Home() {
   const [input, setInput] = useState("");
@@ -119,8 +132,7 @@ export default function Home() {
                   <div className="p-4 rounded-lg bg-secondary/10 border border-secondary/20 space-y-1">
                     <div className="text-xs text-secondary uppercase tracking-wider">Pulls</div>
                     <div className="text-2xl font-mono font-bold text-secondary">
-                      {/* Handle different data structures */}
-                      {(data.pulls?.length) || (data.value?.pulls?.length) || 0}
+                      {countPulls(data.pulls || data.value?.pulls)}
                     </div>
                   </div>
                   <div className="p-4 rounded-lg bg-accent/30 border border-accent space-y-1">
@@ -144,33 +156,32 @@ export default function Home() {
                     <Card className="bg-card/50 border-border/50 h-[500px]">
                       <ScrollArea className="h-full p-6">
                         <div className="space-y-6">
-                          {((data.pulls || data.value?.pulls) || []).map((pull: any, idx: number) => (
+                          {luaTableToArray(data.pulls || data.value?.pulls).map((pull: any, idx: number) => (
                             <div key={idx} className="group relative pl-6 border-l-2 border-primary/30 hover:border-primary transition-colors">
                               <div className="absolute -left-[9px] top-0 w-4 h-4 rounded-full bg-background border-2 border-primary/50 group-hover:border-primary group-hover:scale-110 transition-all" />
                               
-                              <div className="flex items-baseline justify-between mb-2">
+                              <div className="flex items-baseline justify-between gap-2 mb-2">
                                 <h3 className="text-lg font-bold font-display text-white">Pull {idx + 1}</h3>
                                 <Badge variant="outline" className="bg-primary/5 border-primary/20 text-primary">
-                                  {/* Count enemies if array, or keys if object */}
-                                  {Array.isArray(pull) ? pull.length : Object.keys(pull).filter(k => !['color', 'x', 'y'].includes(k)).length} Enemies
+                                  {Object.keys(pull || {}).filter(k => !['color', 'x', 'y'].includes(k)).length} Enemies
                                 </Badge>
                               </div>
 
-                              {/* Enemies List */}
                               <div className="grid grid-cols-1 sm:grid-cols-2 gap-2 text-sm font-mono text-muted-foreground">
-                                {Object.entries(pull).map(([key, val], pIdx) => {
+                                {Object.entries(pull || {}).map(([key, val], pIdx) => {
                                   if (['color', 'x', 'y'].includes(key)) return null;
+                                  const enemies = luaTableToArray(val);
                                   return (
                                     <div key={pIdx} className="flex items-center gap-2 bg-black/20 p-2 rounded">
                                       <Skull className="w-3 h-3 text-destructive/70" />
-                                      <span>Enemy ID: <span className="text-white">{String(val)}</span></span>
+                                      <span>NPC {key}: <span className="text-white">{enemies.length > 0 ? `x${enemies.length}` : String(val)}</span></span>
                                     </div>
                                   );
                                 })}
                               </div>
                             </div>
                           ))}
-                          {(!data.pulls && !data.value?.pulls) && (
+                          {countPulls(data.pulls || data.value?.pulls) === 0 && (
                             <div className="text-center text-muted-foreground py-12">
                               No pull data found in this route.
                             </div>
@@ -184,18 +195,17 @@ export default function Home() {
                     <Card className="bg-card/50 border-border/50 h-[500px]">
                       <ScrollArea className="h-full p-6">
                         <div className="space-y-4">
-                           {/* Check for drawings/objects */}
-                           {((data.objects || data.value?.objects) || []).length > 0 ? (
-                             ((data.objects || data.value?.objects) || []).map((obj: any, i: number) => (
+                           {luaTableToArray(data.objects || data.value?.objects).length > 0 ? (
+                             luaTableToArray(data.objects || data.value?.objects).map((obj: any, i: number) => (
                                <div key={i} className="p-4 rounded border border-secondary/20 bg-secondary/5 space-y-2">
                                  <div className="flex items-center gap-2 text-secondary font-bold">
                                    <MapIcon className="w-4 h-4" />
                                    <span>Map Object {i + 1}</span>
                                  </div>
                                  <div className="grid grid-cols-2 gap-4 font-mono text-xs">
-                                   <div>X: <span className="text-white">{obj.x || "N/A"}</span></div>
-                                   <div>Y: <span className="text-white">{obj.y || "N/A"}</span></div>
-                                   {obj.d && <div className="col-span-2">Data: {String(obj.d).substring(0, 50)}...</div>}
+                                   <div>X: <span className="text-white">{obj?.x || "N/A"}</span></div>
+                                   <div>Y: <span className="text-white">{obj?.y || "N/A"}</span></div>
+                                   {obj?.d && <div className="col-span-2">Data: {String(obj.d).substring(0, 50)}...</div>}
                                  </div>
                                </div>
                              ))
