@@ -1,4 +1,4 @@
-import { inflate } from "pako";
+import { inflateRaw } from "pako";
 
 export interface MDTData {
   dungeonEnemies: any[];
@@ -272,7 +272,7 @@ export function decodeMDT(encodedString: string): MDTData | null {
     // pako.inflate should handle it.
     let decompressed: string;
     try {
-        decompressed = inflate(compressed, { to: "string" });
+        decompressed = inflateRaw(compressed, { to: "string" });
     } catch (e) {
         console.error("Decompression error:", e);
         throw new Error("Decompression failed");
