@@ -7,7 +7,7 @@ import { ScrollArea } from "@/components/ui/scroll-area";
 import { Badge } from "@/components/ui/badge";
 import { Tabs, TabsContent, TabsList, TabsTrigger } from "@/components/ui/tabs";
 import { Alert, AlertDescription, AlertTitle } from "@/components/ui/alert";
-import { Terminal, Shield, Skull, Map as MapIcon, Code, Info, MapPin, Target } from "lucide-react";
+import { Terminal, Shield, Skull, Map as MapIcon, Code, Info, MapPin, Target, Download, Copy, Check } from "lucide-react";
 import { motion, AnimatePresence } from "framer-motion";
 
 function luaTableToArray(obj: any): any[] {
@@ -23,12 +23,44 @@ function countPulls(pulls: any): number {
   return Object.keys(pulls).filter(k => !isNaN(Number(k))).length;
 }
 
+function generateLuaExport(route: ResolvedRoute): string {
+  const dungeonVar = route.dungeonName.toUpperCase().replace(/[^A-Z0-9]/g, '_');
+  let lua = `-- Route for ${route.dungeonName}\n`;
+  lua += `-- Generated from MDT Decoder\n`;
+  lua += `-- Total Forces: ${route.totalCount}\n\n`;
+  lua += `local ${dungeonVar}_ROUTE = {\n`;
+  lua += `    dungeon = "${route.dungeonName}",\n`;
+  lua += `    pulls = {\n`;
+  
+  for (const pull of route.pulls) {
+    lua += `        {\n`;
+    lua += `            note = "Pull ${pull.pullIndex}",\n`;
+    lua += `            enemies = {\n`;
+    for (const enemy of pull.enemies) {
+      lua += `                { name = "${enemy.name}", id = ${enemy.id}, x = ${enemy.x.toFixed(2)}, y = ${enemy.y.toFixed(2)}, count = ${enemy.count} },\n`;
+    }
+    lua += `            },\n`;
+    lua += `            total_count = ${pull.totalCount}\n`;
+    lua += `        },\n`;
+  }
+  
+  lua += `    }\n`;
+  lua += `}\n\n`;
+  lua += `-- Load route into ESP\n`;
+  lua += `if _G.RouteESP then\n`;
+  lua += `    _G.RouteESP.load_route(${dungeonVar}_ROUTE, "${route.dungeonName}")\n`;
+  lua += `end\n`;
+  
+  return lua;
+}
+
 export default function Home() {
   const [input, setInput] = useState("");
   const [data, setData] = useState<any>(null);
   const [resolvedRoute, setResolvedRoute] = useState<ResolvedRoute | null>(null);
   const [error, setError] = useState<string | null>(null);
   const [isDecoding, setIsDecoding] = useState(false);
+  const [copied, setCopied] = useState(false);
 
   const handleDecode = async () => {
     if (!input) return;
@@ -44,13 +76,23 @@ export default function Home() {
       const result = decodeMDT(input);
       setData(result);
       
-      const resolved = resolveCoordinates(result);
-      setResolvedRoute(resolved);
+      if (result) {
+        const resolved = resolveCoordinates(result);
+        setResolvedRoute(resolved);
+      }
     } catch (err: any) {
       setError(err.message);
     } finally {
       setIsDecoding(false);
     }
+  };
+
+  const handleCopyLua = async () => {
+    if (!resolvedRoute) return;
+    const lua = generateLuaExport(resolvedRoute);
+    await navigator.clipboard.writeText(lua);
+    setCopied(true);
+    setTimeout(() => setCopied(false), 2000);
   };
 
   return (
@@ -152,9 +194,10 @@ export default function Home() {
                 </div>
 
                 <Tabs defaultValue="coords" className="w-full">
-                  <TabsList className="w-full grid grid-cols-3 bg-black/40 border border-border/50">
+                  <TabsList className="w-full grid grid-cols-4 bg-black/40 border border-border/50">
                     <TabsTrigger value="coords" data-testid="tab-coords">Coordinates</TabsTrigger>
                     <TabsTrigger value="pulls" data-testid="tab-pulls">Route Pulls</TabsTrigger>
+                    <TabsTrigger value="lua" data-testid="tab-lua">Lua Export</TabsTrigger>
                     <TabsTrigger value="raw" data-testid="tab-raw">Raw Data</TabsTrigger>
                   </TabsList>
 
@@ -268,6 +311,43 @@ export default function Home() {
                             </div>
                           )}
                         </div>
+                      </ScrollArea>
+                    </Card>
+                  </TabsContent>
+
+                  <TabsContent value="lua" className="mt-4">
+                    <Card className="bg-card/50 border-border/50 h-[500px]">
+                      <div className="p-4 border-b border-border/50 flex items-center justify-between">
+                        <div className="text-sm text-muted-foreground">
+                          Lua code for Project Sylvanas Route Assistant ESP
+                        </div>
+                        <Button
+                          size="sm"
+                          variant="outline"
+                          onClick={handleCopyLua}
+                          disabled={!resolvedRoute}
+                          className="gap-2"
+                        >
+                          {copied ? <Check className="w-4 h-4" /> : <Copy className="w-4 h-4" />}
+                          {copied ? "Copied!" : "Copy Lua"}
+                        </Button>
+                      </div>
+                      <ScrollArea className="h-[calc(100%-60px)] p-4">
+                        {resolvedRoute ? (
+                          <pre className="text-xs font-mono text-yellow-400/80 leading-relaxed whitespace-pre-wrap">
+                            {generateLuaExport(resolvedRoute)}
+                          </pre>
+                        ) : (
+                          <div className="flex flex-col items-center justify-center h-[350px] text-muted-foreground space-y-4">
+                            <Download className="w-12 h-12 opacity-20" />
+                            <div className="text-center">
+                              <p>No route data to export.</p>
+                              <p className="text-xs opacity-50 max-w-xs mx-auto mt-2">
+                                Decode an MDT string first to generate Lua export.
+                              </p>
+                            </div>
+                          </div>
+                        )}
                       </ScrollArea>
                     </Card>
                   </TabsContent>
